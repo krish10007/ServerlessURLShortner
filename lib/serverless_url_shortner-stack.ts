@@ -66,6 +66,20 @@ export class ServerlessUrlShortnerStack extends cdk.Stack {
       depsLockFilePath: path.join(__dirname, "../package-lock.json"),
       environment: { URLS_TABLE: urlsTable.tableName },
     });
+
+    const statsFn = new NodejsFunction(this, "StatsFn", {
+      entry: path.join(__dirname, "../src/functions/stats/index.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      memorySize: 256,
+      timeout: Duration.seconds(5),
+      logRetention,
+      environment: {
+        CLICKS_TABLE: clicksTable.tableName,
+      },
+    });
+    clicksTable.grantReadData(statsFn);
+
     redirectFn.addEnvironment("CLICKS_TABLE", clicksTable.tableName);
     clicksTable.grantWriteData(redirectFn);
     urlsTable.grantReadData(redirectFn);
@@ -86,5 +100,8 @@ export class ServerlessUrlShortnerStack extends cdk.Stack {
 
     const idRes = api.root.addResource("{id}");
     idRes.addMethod("GET", new apigw.LambdaIntegration(redirectFn));
+
+    const statsRes = links.addResource("{id}").addResource("stats");
+    statsRes.addMethod("GET", new apigw.LambdaIntegration(statsFn));
   }
 }
