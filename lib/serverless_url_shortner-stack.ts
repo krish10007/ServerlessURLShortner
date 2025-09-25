@@ -29,6 +29,15 @@ export class ServerlessUrlShortnerStack extends cdk.Stack {
       removalPolicy: RemovalPolicy.DESTROY, // cdk destroy cleans it up
     });
 
+    // Clicks table: stores one item per redirect event
+    const clicksTable = new dynamodb.Table(this, "ClicksTable", {
+      partitionKey: { name: "id", type: dynamodb.AttributeType.STRING },
+      sortKey: { name: "timestamp", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      timeToLiveAttribute: "ttl", // auto-cleanup
+      removalPolicy: RemovalPolicy.DESTROY,
+    });
+
     // keep logs short (saves cost if you ever deploy)
     const logRetention = logs.RetentionDays.ONE_WEEK;
 
@@ -40,6 +49,8 @@ export class ServerlessUrlShortnerStack extends cdk.Stack {
       memorySize: 256,
       timeout: Duration.seconds(5),
       logRetention,
+      // point to the project's lockfile so the NodejsFunction bundling can resolve deps
+      depsLockFilePath: path.join(__dirname, "../package-lock.json"),
       environment: { URLS_TABLE: urlsTable.tableName },
     });
     urlsTable.grantReadWriteData(createFn);
@@ -51,8 +62,12 @@ export class ServerlessUrlShortnerStack extends cdk.Stack {
       memorySize: 256,
       timeout: Duration.seconds(5),
       logRetention,
+      // point to the project's lockfile so the NodejsFunction bundling can resolve deps
+      depsLockFilePath: path.join(__dirname, "../package-lock.json"),
       environment: { URLS_TABLE: urlsTable.tableName },
     });
+    redirectFn.addEnvironment("CLICKS_TABLE", clicksTable.tableName);
+    clicksTable.grantWriteData(redirectFn);
     urlsTable.grantReadData(redirectFn);
 
     // 3) API Gateway: POST /links -> create, GET /{id} -> redirect
