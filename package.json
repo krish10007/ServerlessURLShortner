@@ -1,0 +1,10 @@
+{
+  "dependencies": {
+    "@aws-cdk/aws-lambda-nodejs": "^1.203.0",
+    "aws-cdk-lib": "^2.216.0",
+    "constructs": "^10.4.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10"
+  }
+}
