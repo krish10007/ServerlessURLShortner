@@ -1,5 +1,13 @@
-import * as cdk from 'aws-cdk-lib';
-import { Construct } from 'constructs';
+import * as cdk from "aws-cdk-lib";
+import { Construct } from "constructs";
+import { Duration, RemovalPolicy } from "aws-cdk-lib";
+import * as apigw from "aws-cdk-lib/aws-apigateway";
+import * as dynamodb from "aws-cdk-lib/aws-dynamodb";
+import * as logs from "aws-cdk-lib/aws-logs";
+import { NodejsFunction } from "aws-cdk-lib/aws-lambda-nodejs";
+import * as lambda from "aws-cdk-lib/aws-lambda";
+import * as path from "path";
+
 // import * as sqs from 'aws-cdk-lib/aws-sqs';
 
 export class ServerlessUrlShortnerStack extends cdk.Stack {
@@ -12,5 +20,56 @@ export class ServerlessUrlShortnerStack extends cdk.Stack {
     // const queue = new sqs.Queue(this, 'ServerlessUrlShortnerQueue', {
     //   visibilityTimeout: cdk.Duration.seconds(300)
     // });
+
+    // 1) DynamoDB table: stores shortId -> originalUrl
+    const urlsTable = new dynamodb.Table(this, "UrlsTable", {
+      partitionKey: { name: "id", type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST, // $0 at idle
+      timeToLiveAttribute: "expiresAt", // optional TTL column for later
+      removalPolicy: RemovalPolicy.DESTROY, // cdk destroy cleans it up
+    });
+
+    // keep logs short (saves cost if you ever deploy)
+    const logRetention = logs.RetentionDays.ONE_WEEK;
+
+    // 2) Lambda placeholders
+    const createFn = new NodejsFunction(this, "CreateShortLinkFn", {
+      entry: path.join(__dirname, "../src/functions/create/index.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      memorySize: 256,
+      timeout: Duration.seconds(5),
+      logRetention,
+      environment: { URLS_TABLE: urlsTable.tableName },
+    });
+    urlsTable.grantReadWriteData(createFn);
+
+    const redirectFn = new NodejsFunction(this, "RedirectFn", {
+      entry: path.join(__dirname, "../src/functions/redirect/index.ts"),
+      handler: "handler",
+      runtime: lambda.Runtime.NODEJS_20_X,
+      memorySize: 256,
+      timeout: Duration.seconds(5),
+      logRetention,
+      environment: { URLS_TABLE: urlsTable.tableName },
+    });
+    urlsTable.grantReadData(redirectFn);
+
+    // 3) API Gateway: POST /links -> create, GET /{id} -> redirect
+    const api = new apigw.RestApi(this, "UrlShortenerApi", {
+      deployOptions: {
+        stageName: "dev",
+        metricsEnabled: true,
+        loggingLevel: apigw.MethodLoggingLevel.ERROR, // minimal logs
+        dataTraceEnabled: false,
+      },
+      cloudWatchRole: false, // tiny savings
+    });
+
+    const links = api.root.addResource("links");
+    links.addMethod("POST", new apigw.LambdaIntegration(createFn));
+
+    const idRes = api.root.addResource("{id}");
+    idRes.addMethod("GET", new apigw.LambdaIntegration(redirectFn));
   }
 }
